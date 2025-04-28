@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::{
     generation::{
         chat::{request::ChatMessageRequest, ChatMessage, ChatMessageResponse, MessageRole},
-        parameters::FormatType,
+        parameters::{FormatType, KeepAlive},
         tools::{Tool, ToolHolder, ToolInfo},
     },
     history::ChatHistory,
@@ -22,9 +22,10 @@ pub struct Coordinator<C: ChatHistory> {
     options: ModelOptions,
     history: C,
     tool_infos: Vec<ToolInfo>,
-    tools: HashMap<&'static str, Box<dyn ToolHolder>>,
+    tools: HashMap<String, Box<dyn ToolHolder>>,
     debug: bool,
     format: Option<FormatType>,
+    keep_alive: Option<KeepAlive>,
 }
 
 impl<C: ChatHistory> Coordinator<C> {
@@ -49,12 +50,13 @@ impl<C: ChatHistory> Coordinator<C> {
             tools: HashMap::default(),
             debug: false,
             format: None,
+            keep_alive: None,
         }
     }
 
     pub fn add_tool<T: Tool + 'static>(mut self, tool: T) -> Self {
         self.tool_infos.push(ToolInfo::new::<_, T>());
-        self.tools.insert(T::name(), Box::new(tool));
+        self.tools.insert(T::name().to_string(), Box::new(tool));
         self
     }
 
@@ -73,6 +75,11 @@ impl<C: ChatHistory> Coordinator<C> {
         self
     }
 
+    pub fn keep_alive(mut self, keep_alive: KeepAlive) -> Self {
+        self.keep_alive = Some(keep_alive);
+        self
+    }
+
     pub async fn chat(
         &mut self,
         messages: Vec<ChatMessage>,
@@ -87,6 +94,10 @@ impl<C: ChatHistory> Coordinator<C> {
         let mut request = ChatMessageRequest::new(self.model.clone(), messages)
             .options(self.options.clone())
             .tools(self.tool_infos.clone());
+
+        if let Some(keep_alive) = &self.keep_alive {
+            request = request.keep_alive(keep_alive.clone());
+        }
 
         if let Some(format) = &self.format {
             // If no tools are specified, set the format on the request. Otherwise wait for the
